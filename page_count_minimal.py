@@ -211,8 +211,7 @@ def record_visit_simple(url: str = Query(..., description="The URL being visited
             "url": url,
             "ip": ip,
             "timestamp": timestamp,
-            "total_visits": f"{total:,}",
-            "updated at": "21:33"
+            "visits": f"{total:,}"
         }
     
     except Exception as e:
