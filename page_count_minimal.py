@@ -133,7 +133,7 @@ def record_visit(visit_data: VisitRequest, request: Request):
             "url": url,
             "ip": ip,
             "user_agent": user_agent,
-            "status": f"Visit #{total} recorded",
+            "status": f"Visit #{total:,} recorded",
             "timestamp": timestamp
         }
     
@@ -166,16 +166,16 @@ def get_stats():
         
         # Format the response
         return {
-            "total_visits": total_visits,
-            "unique_visitors": unique_visitors,
-            "popular_pages": {url: count for url, count in url_counts},
+            "total_visits": f"{total_visits:,}",
+            "unique_visitors": f"{unique_visitors:,}",
+            "popular_pages": {url: f"{count:,}" for url, count in (url_counts or [])},
             "recent_visits": [
                 {
                     "url": url,
                     "ip": ip,
                     "timestamp": timestamp
                 }
-                for url, ip, timestamp in recent_visits
+                for url, ip, timestamp in (recent_visits or [])
             ]
         }
     
@@ -205,13 +205,13 @@ def record_visit_simple(url: str = Query(..., description="The URL being visited
         total = total_row[0] if total_row else 0
 
         logger.info(f"Visit recorded: {url} from {ip}")
-        
+
         return {
             "message": "Visit recorded!",
             "url": url,
             "ip": ip,
             "timestamp": timestamp,
-            "visits:": total
+            "total_visits": f"{total:,}"
         }
     
     except Exception as e:
@@ -246,9 +246,9 @@ def get_all_visits():
                     "user_agent": user_agent,
                     "timestamp": timestamp
                 }
-                for url, ip, user_agent, timestamp in visits
+                for url, ip, user_agent, timestamp in (visits or [])
             ],
-            "total_count": len(visits)
+            "total_count": f"{len(visits or []):,}"
         }
     
     except Exception as e:
