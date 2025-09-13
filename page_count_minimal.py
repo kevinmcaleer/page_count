@@ -5,6 +5,7 @@ from datetime import datetime
 import sqlite3
 import logging
 import os
+from typing import Optional
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -230,13 +231,42 @@ def health_check():
 
 # Get all visits (useful for debugging)
 @app.get("/all-visits")
-def get_all_visits():
-    """Get all visits (for debugging/demo purposes)"""
+def get_all_visits(
+    start_date: Optional[str] = None,  # Format: YYYY-MM-DD
+    end_date: Optional[str] = None,    # Format: YYYY-MM-DD
+    since: Optional[str] = None,       # Format: YYYY-MM-DD HH:MM:SS or ISO
+    limit: Optional[int] = None,
+    offset: Optional[int] = None
+):
+    """Get all visits, with optional date range and incremental sync support"""
     try:
-        visits = execute_query(
-            "SELECT url, ip_address, user_agent, timestamp FROM visits ORDER BY timestamp DESC",
-            fetch="all"
-        )
+        query = "SELECT url, ip_address, user_agent, timestamp FROM visits"
+        conditions = []
+        params = []
+
+        # Date range filtering
+        if start_date:
+            conditions.append("date(timestamp) >= date(?)")
+            params.append(start_date)
+        if end_date:
+            conditions.append("date(timestamp) <= date(?)")
+            params.append(end_date)
+        # Since timestamp filtering
+        if since:
+            conditions.append("timestamp > ?")
+            params.append(since)
+        
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY timestamp DESC"
+        if limit:
+            query += " LIMIT ?"
+            params.append(limit)
+        if offset:
+            query += " OFFSET ?"
+            params.append(offset)
+
+        visits = execute_query(query, tuple(params), fetch="all")
         
         return {
             "visits": [
