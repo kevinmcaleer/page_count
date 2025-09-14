@@ -233,6 +233,8 @@ def health_check():
     }
 
 # Get all visits (useful for debugging)
+from fastapi import Depends
+
 @app.get("/all-visits")
 def get_all_visits(
     start_date: Optional[str] = None,  # Format: YYYY-MM-DD
@@ -316,8 +318,8 @@ def get_all_visits(
 
         if format == "jsonl":
             # Output as JSON Lines, one object per line, no summary
-            response.headers["Content-Type"] = "application/jsonl"
-            return "\n".join(json.dumps(v, ensure_ascii=False) for v in visit_dicts)
+            content = "\n".join(json.dumps(v, ensure_ascii=False) for v in visit_dicts)
+            return Response(content=content, media_type="application/jsonl")
         else:
             # Default: JSON object with summary
             return {
