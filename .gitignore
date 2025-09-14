@@ -2,3 +2,5 @@
 venv
 *.db
 data/
+*.jsonl
+data/*.db
