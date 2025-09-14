@@ -252,9 +252,15 @@ def get_all_visits(
         if range:
             try:
                 start, end = [x.strip() for x in range.split(",")[:2]]
-                conditions.append("date(timestamp) >= date(?)")
+                # Use full timestamp comparison for precision
+                # If only date is provided, treat as start of day
+                if len(start) == 10:
+                    start += " 00:00:00"
+                if len(end) == 10:
+                    end += " 00:00:00"
+                conditions.append("timestamp >= ?")
                 params.append(start)
-                conditions.append("date(timestamp) < date(?)")
+                conditions.append("timestamp < ?")
                 params.append(end)
             except Exception as e:
                 logger.error(f"Invalid range parameter: {range} - {e}")
@@ -280,6 +286,10 @@ def get_all_visits(
         if offset:
             query += " OFFSET ?"
             params.append(offset)
+
+        # Debug: log the final query and params
+        logger.info(f"/all-visits SQL: {query}")
+        logger.info(f"/all-visits params: {params}")
 
         visits = execute_query(query, tuple(params), fetch="all")
 
