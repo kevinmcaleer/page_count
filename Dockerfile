@@ -10,13 +10,13 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
-COPY requirements_simple.txt .
+COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements_simple.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY page_count_simple.py .
+COPY page_count.py .
 
 # Create directory for database
 RUN mkdir -p /app/data
@@ -25,4 +25,4 @@ RUN mkdir -p /app/data
 EXPOSE 8000
 
 # Run the application
-CMD ["uvicorn", "page_count_simple:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "page_count:app", "--host", "0.0.0.0", "--port", "8000"]

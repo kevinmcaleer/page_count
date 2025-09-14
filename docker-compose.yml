@@ -1,11 +1,9 @@
-version: '3.8'
-
 services:
-  page-counter-minimal:
+  page-counter:
     build:
       context: .
-      dockerfile: Dockerfile.minimal
-    container_name: page-counter-minimal
+      dockerfile: Dockerfile
+    container_name: page-counter
     ports:
       - "8000:8000"
     volumes:
