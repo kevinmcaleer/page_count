@@ -32,3 +32,14 @@ docs/
 node_modules/
 Dockerfile
 docker-compose.yml
+.git
+__pycache__/
+*.pyc
+*.log
+.env*
+.vscode
+.idea
+dist/
+build/
+tests/
+docs/
