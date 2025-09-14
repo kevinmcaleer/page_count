@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Query
+from fastapi import FastAPI, Request, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime
@@ -6,6 +6,7 @@ import sqlite3
 import logging
 import os
 from typing import Optional
+import json
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -235,27 +236,41 @@ def get_all_visits(
     start_date: Optional[str] = None,  # Format: YYYY-MM-DD
     end_date: Optional[str] = None,    # Format: YYYY-MM-DD
     since: Optional[str] = None,       # Format: YYYY-MM-DD HH:MM:SS or ISO
+    range: Optional[str] = None,       # Format: YYYY-MM-DD,YYYY-MM-DD
     limit: Optional[int] = None,
-    offset: Optional[int] = None
+    offset: Optional[int] = None,
+    format: Optional[str] = None,      # 'jsonl' for JSON Lines output
+    response: Response = None
 ):
-    """Get all visits, with optional date range and incremental sync support"""
+    """Get all visits, with optional date range, range, and incremental sync support. Supports JSONL output."""
     try:
         query = "SELECT url, ip_address, user_agent, timestamp FROM visits"
         conditions = []
         params = []
 
-        # Date range filtering
-        if start_date:
-            conditions.append("date(timestamp) >= date(?)")
-            params.append(start_date)
-        if end_date:
-            conditions.append("date(timestamp) <= date(?)")
-            params.append(end_date)
-        # Since timestamp filtering
-        if since:
-            conditions.append("timestamp > ?")
-            params.append(since)
-        
+        # Range filtering (takes precedence)
+        if range:
+            try:
+                start, end = [x.strip() for x in range.split(",")[:2]]
+                conditions.append("date(timestamp) >= date(?)")
+                params.append(start)
+                conditions.append("date(timestamp) < date(?)")
+                params.append(end)
+            except Exception as e:
+                logger.error(f"Invalid range parameter: {range} - {e}")
+        else:
+            # Date range filtering
+            if start_date:
+                conditions.append("date(timestamp) >= date(?)")
+                params.append(start_date)
+            if end_date:
+                conditions.append("date(timestamp) <= date(?)")
+                params.append(end_date)
+            # Since timestamp filtering
+            if since:
+                conditions.append("timestamp > ?")
+                params.append(since)
+
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY timestamp DESC"
@@ -267,20 +282,27 @@ def get_all_visits(
             params.append(offset)
 
         visits = execute_query(query, tuple(params), fetch="all")
-        
-        return {
-            "visits": [
-                {
-                    "url": url,
-                    "ip": ip,
-                    "user_agent": user_agent,
-                    "timestamp": timestamp
-                }
-                for url, ip, user_agent, timestamp in (visits or [])
-            ],
-            "total_count": f"{len(visits or []):,}"
-        }
-    
+
+        visit_dicts = [
+            {
+                "url": url,
+                "ip": ip,
+                "user_agent": user_agent,
+                "timestamp": timestamp
+            }
+            for url, ip, user_agent, timestamp in (visits or [])
+        ]
+
+        if format == "jsonl":
+            # Output as JSON Lines, one object per line, no summary
+            response.headers["Content-Type"] = "application/jsonl"
+            return "\n".join(json.dumps(v, ensure_ascii=False) for v in visit_dicts)
+        else:
+            # Default: JSON object with summary
+            return {
+                "visits": visit_dicts,
+                "total_count": f"{len(visit_dicts):,}"
+            }
     except Exception as e:
         logger.error(f"Error getting all visits: {e}")
         raise

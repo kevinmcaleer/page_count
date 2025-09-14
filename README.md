@@ -114,7 +114,50 @@ Get detailed statistics for a specific URL.
 - `url`: The URL to get statistics for (URL-encoded)
 - `hours` (optional): Hours to look back (default: 24)
 
+
 ### Utility Endpoints
+
+#### `GET /all-visits`
+Retrieve all visits, with advanced filtering and export options.
+
+**Parameters:**
+- `start_date` (optional): Start date (YYYY-MM-DD)
+- `end_date` (optional): End date (YYYY-MM-DD)
+- `since` (optional): Only visits after this timestamp (YYYY-MM-DD HH:MM:SS)
+- `range` (optional): Date range, format `YYYY-MM-DD,YYYY-MM-DD` (start inclusive, end exclusive). Takes precedence over other date filters.
+- `limit` (optional): Limit number of results
+- `offset` (optional): Offset for pagination
+- `format` (optional): If set to `jsonl`, output is JSON Lines (one record per line, no summary)
+
+**Default JSON Output:**
+```json
+{
+  "visits": [
+    {
+      "url": "https://example.com/page",
+      "ip": "192.168.1.1",
+      "user_agent": "Mozilla/5.0...",
+      "timestamp": "2025-07-28 10:30:00"
+    }
+    // ...
+  ],
+  "total_count": "123"
+}
+```
+
+**JSONL Output Example:**
+Request: `/all-visits?range=2025-09-01,2025-09-07&format=jsonl`
+
+Response:
+```jsonl
+{"url": "https://example.com/page", "ip": "192.168.1.1", "user_agent": "Mozilla/5.0...", "timestamp": "2025-09-01 12:00:00"}
+{"url": "https://example.com/page2", "ip": "192.168.1.2", "user_agent": "Mozilla/5.0...", "timestamp": "2025-09-02 13:00:00"}
+// ...
+```
+
+**Notes:**
+- When `format=jsonl` is used, each line is a single JSON object and there is no summary or wrapper object.
+- When both `range` and other date filters are provided, `range` takes precedence.
 
 #### `GET /health`
 Health check endpoint.
