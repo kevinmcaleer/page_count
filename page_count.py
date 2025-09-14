@@ -2,11 +2,13 @@ from fastapi import FastAPI, Request, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime
+
 import sqlite3
 import logging
 import os
 from typing import Optional
 import json
+from dateutil import parser as date_parser
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -252,12 +254,14 @@ def get_all_visits(
         if range:
             try:
                 start, end = [x.strip() for x in range.split(",")[:2]]
-                # Use full timestamp comparison for precision
-                # If only date is provided, treat as start of day
+                # Normalize to 'YYYY-MM-DD 00:00:00' if only date is provided
                 if len(start) == 10:
                     start += " 00:00:00"
                 if len(end) == 10:
-                    end += " 00:00:00"
+                    # To make end exclusive, add 1 day and set to 00:00:00
+                    from datetime import datetime, timedelta
+                    end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)
+                    end = end_dt.strftime("%Y-%m-%d 00:00:00")
                 conditions.append("timestamp >= ?")
                 params.append(start)
                 conditions.append("timestamp < ?")
@@ -291,17 +295,25 @@ def get_all_visits(
         logger.info(f"/all-visits SQL: {query}")
         logger.info(f"/all-visits params: {params}")
 
+
         visits = execute_query(query, tuple(params), fetch="all")
 
-        visit_dicts = [
-            {
+        # Normalize timestamps to 'YYYY-MM-DD HH:MM:SS' for all returned visits
+        visit_dicts = []
+        for url, ip, user_agent, timestamp in (visits or []):
+            norm_ts = timestamp
+            try:
+                # Robustly parse and reformat timestamp
+                dt = date_parser.parse(timestamp)
+                norm_ts = dt.strftime("%Y-%m-%d %H:%M:%S")
+            except Exception as e:
+                logger.warning(f"Could not parse timestamp '{timestamp}': {e}")
+            visit_dicts.append({
                 "url": url,
                 "ip": ip,
                 "user_agent": user_agent,
-                "timestamp": timestamp
-            }
-            for url, ip, user_agent, timestamp in (visits or [])
-        ]
+                "timestamp": norm_ts
+            })
 
         if format == "jsonl":
             # Output as JSON Lines, one object per line, no summary
