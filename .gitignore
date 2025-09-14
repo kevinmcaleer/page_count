@@ -4,3 +4,6 @@ venv
 data/
 *.jsonl
 data/*.db
+__pycache__
+*.pyc
+visits.db
