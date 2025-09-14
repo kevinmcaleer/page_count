@@ -254,14 +254,13 @@ def get_all_visits(
         if range:
             try:
                 start, end = [x.strip() for x in range.split(",")[:2]]
-                # Normalize to 'YYYY-MM-DD 00:00:00' if only date is provided
+                # Always treat end as exclusive
+                from datetime import datetime
                 if len(start) == 10:
                     start += " 00:00:00"
                 if len(end) == 10:
-                    # To make end exclusive, add 1 day and set to 00:00:00
-                    from datetime import datetime, timedelta
-                    end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)
-                    end = end_dt.strftime("%Y-%m-%d 00:00:00")
+                    end = end + " 00:00:00"
+                # If end is a full datetime, do not adjust, but always use < end (exclusive)
                 conditions.append("timestamp >= ?")
                 params.append(start)
                 conditions.append("timestamp < ?")
@@ -298,16 +297,16 @@ def get_all_visits(
 
         visits = execute_query(query, tuple(params), fetch="all")
 
-        # Normalize timestamps to 'YYYY-MM-DD HH:MM:SS' for all returned visits
+        # Debug: log the raw and normalized timestamps for each visit
         visit_dicts = []
         for url, ip, user_agent, timestamp in (visits or []):
             norm_ts = timestamp
             try:
-                # Robustly parse and reformat timestamp
                 dt = date_parser.parse(timestamp)
                 norm_ts = dt.strftime("%Y-%m-%d %H:%M:%S")
             except Exception as e:
                 logger.warning(f"Could not parse timestamp '{timestamp}': {e}")
+            logger.info(f"Visit: url={url}, raw_ts={timestamp}, norm_ts={norm_ts}")
             visit_dicts.append({
                 "url": url,
                 "ip": ip,
