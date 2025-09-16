@@ -320,6 +320,17 @@ def get_all_visits(
             # Output as JSON Lines, one object per line, no summary
             content = "\n".join(json.dumps(v, ensure_ascii=False) for v in visit_dicts)
             return Response(content=content, media_type="application/jsonl")
+        elif format == "csv":
+            # Output as CSV
+            import io
+            import csv
+            output = io.StringIO()
+            writer = csv.DictWriter(output, fieldnames=["url", "ip", "user_agent", "timestamp"])
+            writer.writeheader()
+            writer.writerows(visit_dicts)
+            content = output.getvalue()
+            output.close()
+            return Response(content=content, media_type="text/csv")
         else:
             # Default: JSON object with summary
             return {
