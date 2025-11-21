@@ -27,6 +27,21 @@ import sys
 import argparse
 from datetime import datetime
 from urllib.parse import urlparse
+from pathlib import Path
+
+# Load environment variables from .env file
+def load_env_file():
+    """Load environment variables from .env file"""
+    env_path = Path(__file__).parent / '.env'
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    os.environ.setdefault(key.strip(), value.strip())
+
+load_env_file()
 
 def get_postgres_connection():
     """Get PostgreSQL connection from environment"""
