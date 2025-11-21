@@ -60,6 +60,19 @@ def init_database():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_url ON visits(url)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON visits(timestamp)")
 
+    # Remove the unique constraint if it exists (was used for migration only)
+    cursor.execute("""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'visits_unique_record'
+            ) THEN
+                ALTER TABLE visits DROP CONSTRAINT visits_unique_record;
+            END IF;
+        END $$;
+    """)
+
     conn.commit()
     cursor.close()
     conn.close()
@@ -309,10 +322,10 @@ def get_all_visits(
             query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY timestamp DESC"
         if limit:
-            query += " LIMIT ?"
+            query += " LIMIT %s"
             params.append(limit)
         if offset:
-            query += " OFFSET ?"
+            query += " OFFSET %s"
             params.append(offset)
 
         # Debug: log the final query and params
