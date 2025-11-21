@@ -143,7 +143,7 @@ def record_visit(visit_data: VisitRequest, request: Request):
         
         # Insert visit into database
         execute_query(
-            "INSERT INTO visits (url, ip_address, user_agent, timestamp) VALUES (?, ?, ?, ?)",
+            "INSERT INTO visits (url, ip_address, user_agent, timestamp) VALUES (%s, %s, %s, %s)",
             (url, ip, user_agent, timestamp)
         )
         
@@ -152,7 +152,7 @@ def record_visit(visit_data: VisitRequest, request: Request):
     
         # Count total visits for that URL
         total_row = execute_query(
-            "SELECT COUNT(*) FROM visits WHERE url = ?", (url,), fetch="one"
+            "SELECT COUNT(*) FROM visits WHERE url = %s", (url,), fetch="one"
         )
         total = total_row[0] if total_row else 0
 
@@ -221,13 +221,13 @@ def record_visit_simple(url: str = Query(..., description="The URL being visited
         
         # Insert visit into database
         execute_query(
-            "INSERT INTO visits (url, ip_address, user_agent, timestamp) VALUES (?, ?, ?, ?)",
+            "INSERT INTO visits (url, ip_address, user_agent, timestamp) VALUES (%s, %s, %s, %s)",
             (url, ip, user_agent, timestamp)
         )
         
         # Count total visits for this URL
         total_row = execute_query(
-            "SELECT COUNT(*) FROM visits WHERE url = ?", (url,), fetch="one"
+            "SELECT COUNT(*) FROM visits WHERE url = %s", (url,), fetch="one"
         )
         total = total_row[0] if total_row else 0
 
@@ -286,23 +286,23 @@ def get_all_visits(
                 if len(end) == 10:
                     end = end + " 00:00:00"
                 # If end is a full datetime, do not adjust, but always use < end (exclusive)
-                conditions.append("timestamp >= ?")
+                conditions.append("timestamp >= %s")
                 params.append(start)
-                conditions.append("timestamp < ?")
+                conditions.append("timestamp < %s")
                 params.append(end)
             except Exception as e:
                 logger.error(f"Invalid range parameter: {range} - {e}")
         else:
             # Date range filtering
             if start_date:
-                conditions.append("date(timestamp) >= date(?)")
+                conditions.append("date(timestamp) >= date(%s)")
                 params.append(start_date)
             if end_date:
-                conditions.append("date(timestamp) <= date(?)")
+                conditions.append("date(timestamp) <= date(%s)")
                 params.append(end_date)
             # Since timestamp filtering
             if since:
-                conditions.append("timestamp > ?")
+                conditions.append("timestamp > %s")
                 params.append(since)
 
         if conditions:
