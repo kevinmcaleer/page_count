@@ -50,6 +50,47 @@ def get_postgres_connection():
         raise ValueError("DATABASE_URL environment variable is not set. Please check your .env file.")
     return psycopg2.connect(database_url)
 
+def ensure_database_exists():
+    """Create the database if it doesn't exist"""
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise ValueError("DATABASE_URL environment variable is not set.")
+
+    # Parse the database URL to extract connection details
+    parsed = urlparse(database_url)
+    db_name = parsed.path.lstrip('/')
+
+    # Build connection string to 'postgres' database (default database)
+    admin_url = f"{parsed.scheme}://{parsed.netloc}/postgres"
+
+    try:
+        # Connect to the default 'postgres' database
+        conn = psycopg2.connect(admin_url)
+        conn.autocommit = True  # Required for CREATE DATABASE
+        cursor = conn.cursor()
+
+        # Check if database exists
+        cursor.execute(
+            "SELECT 1 FROM pg_database WHERE datname = %s",
+            (db_name,)
+        )
+        exists = cursor.fetchone()
+
+        if not exists:
+            print(f"   Creating database '{db_name}'...")
+            cursor.execute(f'CREATE DATABASE "{db_name}"')
+            print(f"   ✓ Database '{db_name}' created successfully")
+        else:
+            print(f"   ✓ Database '{db_name}' already exists")
+
+        cursor.close()
+        conn.close()
+
+    except Exception as e:
+        print(f"   ⚠ Could not create database: {e}")
+        print(f"   Please create the database manually: CREATE DATABASE {db_name};")
+        raise
+
 def verify_postgres_schema(pg_conn):
     """Verify PostgreSQL schema exists and create if needed"""
     cursor = pg_conn.cursor()
@@ -134,13 +175,17 @@ def migrate_records(sqlite_path, dry_run=False, force=False):
     print(f"Starting incremental migration from {sqlite_path}")
     print("=" * 70)
 
-    # Connect to PostgreSQL first
-    print(f"\n1. Connecting to PostgreSQL...")
+    # Ensure database exists
+    print(f"\n1. Ensuring database exists...")
+    ensure_database_exists()
+
+    # Connect to PostgreSQL
+    print(f"\n2. Connecting to PostgreSQL...")
     pg_conn = get_postgres_connection()
     print("   ✓ Connected to PostgreSQL")
 
     # Verify schema (includes unique constraint for deduplication)
-    print(f"\n2. Verifying PostgreSQL schema...")
+    print(f"\n3. Verifying PostgreSQL schema...")
     verify_postgres_schema(pg_conn)
 
     # Check existing records and get latest timestamp
@@ -154,7 +199,7 @@ def migrate_records(sqlite_path, dry_run=False, force=False):
         print(f"\n   PostgreSQL is empty - performing initial migration")
 
     # Read SQLite records (only newer than latest if incremental)
-    print(f"\n3. Reading records from SQLite database...")
+    print(f"\n4. Reading records from SQLite database...")
     records, sqlite_count = get_sqlite_records(sqlite_path, since_timestamp=latest_timestamp)
 
     if sqlite_count == 0:
@@ -175,7 +220,7 @@ def migrate_records(sqlite_path, dry_run=False, force=False):
         return
 
     # Migrate records with ON CONFLICT DO NOTHING for safety
-    print(f"\n4. Migrating records to PostgreSQL (skipping duplicates)...")
+    print(f"\n5. Migrating records to PostgreSQL (skipping duplicates)...")
     cursor = pg_conn.cursor()
 
     migrated = 0
@@ -231,7 +276,7 @@ def migrate_records(sqlite_path, dry_run=False, force=False):
     cursor.close()
 
     # Verify migration
-    print(f"\n5. Verifying migration...")
+    print(f"\n6. Verifying migration...")
     final_count, final_latest = check_existing_records(pg_conn)
     print(f"   PostgreSQL now contains {final_count:,} total records")
 
