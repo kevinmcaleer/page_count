@@ -17,3 +17,4 @@ urllib3==2.5.0
 
 uvicorn==0.35.0
 python-dateutil
+psycopg2-binary==2.9.10

@@ -3,43 +3,50 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime
 
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import logging
 import os
 from typing import Optional
 import json
 from dateutil import parser as date_parser
+from urllib.parse import urlparse, parse_qs
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Database setup
-DATABASE_PATH = "./data/visits.db"
+# Database configuration from environment
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is not set. Please check your .env file.")
+
+def get_db_connection():
+    """Create a new database connection"""
+    return psycopg2.connect(DATABASE_URL)
 
 def init_database():
-    """Initialize the SQLite database"""
-    # Create data directory if it doesn't exist
-    os.makedirs("./data", exist_ok=True)
-    
-    # Connect and create table
-    conn = sqlite3.connect(DATABASE_PATH)
+    """Initialize the PostgreSQL database"""
+    conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS visits (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             url TEXT NOT NULL,
             ip_address TEXT,
             user_agent TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     # Create index for better performance
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_url ON visits(url)")
-    
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON visits(timestamp)")
+
     conn.commit()
+    cursor.close()
     conn.close()
     logger.info("Database initialized")
 
@@ -88,23 +95,24 @@ def get_client_ip(request: Request) -> str:
 # Helper function to execute database queries
 def execute_query(query: str, params: tuple = (), fetch: str = None):
     """Execute a database query and return results"""
-    conn = sqlite3.connect(DATABASE_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     try:
         cursor.execute(query, params)
-        
+
         if fetch == "one":
             result = cursor.fetchone()
         elif fetch == "all":
             result = cursor.fetchall()
         else:
             result = None
-        
+
         conn.commit()
         return result
-    
+
     finally:
+        cursor.close()
         conn.close()
 
 # Main endpoint to record a visit
