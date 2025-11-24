@@ -12,6 +12,7 @@ import json
 from dateutil import parser as date_parser
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
+import time
 
 # Load environment variables from .env file
 def load_env_file():
@@ -37,49 +38,71 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable is not set. Please check your .env file.")
 
-def get_db_connection():
-    """Create a new database connection"""
-    return psycopg2.connect(DATABASE_URL)
+def get_db_connection(max_retries=3, retry_delay=2):
+    """Create a new database connection with retry logic"""
+    for attempt in range(max_retries):
+        try:
+            return psycopg2.connect(DATABASE_URL)
+        except psycopg2.OperationalError as e:
+            if attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                logger.warning(f"Database connection attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"Failed to connect to database after {max_retries} attempts")
+                raise
 
-def init_database():
-    """Initialize the PostgreSQL database"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
+def init_database(max_retries=10, retry_delay=5):
+    """Initialize the PostgreSQL database with retry logic for startup"""
+    logger.info("Initializing database...")
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS visits (
-            id SERIAL PRIMARY KEY,
-            url TEXT NOT NULL,
-            ip_address TEXT,
-            user_agent TEXT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+    for attempt in range(max_retries):
+        try:
+            conn = get_db_connection(max_retries=1)
+            cursor = conn.cursor()
 
-    # Create index for better performance
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_url ON visits(url)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON visits(timestamp)")
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS visits (
+                    id SERIAL PRIMARY KEY,
+                    url TEXT NOT NULL,
+                    ip_address TEXT,
+                    user_agent TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-    # Remove the unique constraint if it exists (was used for migration only)
-    cursor.execute("""
-        DO $$
-        BEGIN
-            IF EXISTS (
-                SELECT 1 FROM pg_constraint
-                WHERE conname = 'visits_unique_record'
-            ) THEN
-                ALTER TABLE visits DROP CONSTRAINT visits_unique_record;
-            END IF;
-        END $$;
-    """)
+            # Create index for better performance
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_url ON visits(url)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON visits(timestamp)")
 
-    conn.commit()
-    cursor.close()
-    conn.close()
-    logger.info("Database initialized")
+            # Remove the unique constraint if it exists (was used for migration only)
+            cursor.execute("""
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conname = 'visits_unique_record'
+                    ) THEN
+                        ALTER TABLE visits DROP CONSTRAINT visits_unique_record;
+                    END IF;
+                END $$;
+            """)
 
-# Initialize database on startup
-init_database()
+            conn.commit()
+            cursor.close()
+            conn.close()
+            logger.info("Database initialized successfully!")
+            return  # Success, exit the retry loop
+
+        except psycopg2.OperationalError as e:
+            if attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** attempt)  # Exponential backoff: 5s, 10s, 20s, 40s, etc.
+                logger.warning(f"Database initialization attempt {attempt + 1}/{max_retries} failed: {e}")
+                logger.info(f"Retrying in {wait_time} seconds... (Database may still be starting up)")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"Failed to initialize database after {max_retries} attempts. Database may be down.")
+                raise
 
 # Pydantic models for API requests/responses
 class VisitRequest(BaseModel):
@@ -95,9 +118,15 @@ class VisitResponse(BaseModel):
 # Create FastAPI app
 app = FastAPI(
     title="Simple Page Visit Counter",
-    description="A simple API to track page visits using SQLite",
+    description="A simple API to track page visits using PostgreSQL",
     version="1.0.0"
 )
+
+# Startup event to initialize database with retry logic
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database on application startup"""
+    init_database()
 
 # Add CORS middleware to allow browser requests
 # CORS means Cross-Origin Resource Sharing, which allows your API to be accessed from different domains.
