@@ -14,6 +14,16 @@ from urllib.parse import urlparse, parse_qs
 from pathlib import Path
 import time
 
+
+def normalize_url(url: str) -> str:
+    """Strip domain to get a relative path matching historic page_views data."""
+    for prefix in ("https://www.kevsrobots.com/", "http://www.kevsrobots.com/",
+                    "https://kevsrobots.com/", "http://kevsrobots.com/"):
+        if url.startswith(prefix):
+            path = url[len(prefix):]
+            return path if path else "index.html"
+    return url
+
 # Load environment variables from .env file
 def load_env_file():
     """Load environment variables from .env file"""
@@ -45,7 +55,7 @@ def get_db_connection(max_retries=3, retry_delay=2):
             return psycopg2.connect(DATABASE_URL)
         except psycopg2.OperationalError as e:
             if attempt < max_retries - 1:
-                wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                wait_time = retry_delay * (2 ** attempt)
                 logger.warning(f"Database connection attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {wait_time}s...")
                 time.sleep(wait_time)
             else:
@@ -62,46 +72,32 @@ def init_database(max_retries=10, retry_delay=5):
             cursor = conn.cursor()
 
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS visits (
+                CREATE TABLE IF NOT EXISTS page_views (
                     id SERIAL PRIMARY KEY,
-                    url TEXT NOT NULL,
-                    ip_address TEXT,
-                    user_agent TEXT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    url VARCHAR NOT NULL,
+                    ip_address VARCHAR,
+                    user_agent VARCHAR,
+                    viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
 
-            # Create index for better performance
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_url ON visits(url)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON visits(timestamp)")
-
-            # Remove the unique constraint if it exists (was used for migration only)
-            cursor.execute("""
-                DO $$
-                BEGIN
-                    IF EXISTS (
-                        SELECT 1 FROM pg_constraint
-                        WHERE conname = 'visits_unique_record'
-                    ) THEN
-                        ALTER TABLE visits DROP CONSTRAINT visits_unique_record;
-                    END IF;
-                END $$;
-            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_page_views_url ON page_views(url)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_page_views_viewed_at ON page_views(viewed_at)")
 
             conn.commit()
             cursor.close()
             conn.close()
             logger.info("Database initialized successfully!")
-            return  # Success, exit the retry loop
+            return
 
         except psycopg2.OperationalError as e:
             if attempt < max_retries - 1:
-                wait_time = retry_delay * (2 ** attempt)  # Exponential backoff: 5s, 10s, 20s, 40s, etc.
+                wait_time = retry_delay * (2 ** attempt)
                 logger.warning(f"Database initialization attempt {attempt + 1}/{max_retries} failed: {e}")
-                logger.info(f"Retrying in {wait_time} seconds... (Database may still be starting up)")
+                logger.info(f"Retrying in {wait_time} seconds...")
                 time.sleep(wait_time)
             else:
-                logger.error(f"Failed to initialize database after {max_retries} attempts. Database may be down.")
+                logger.error(f"Failed to initialize database after {max_retries} attempts.")
                 raise
 
 # Pydantic models for API requests/responses
@@ -129,7 +125,6 @@ async def startup_event():
     init_database()
 
 # Add CORS middleware to allow browser requests
-# CORS means Cross-Origin Resource Sharing, which allows your API to be accessed from different domains.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -141,12 +136,9 @@ app.add_middleware(
 # Helper function to get client IP
 def get_client_ip(request: Request) -> str:
     """Get the client IP address from the request"""
-    # Check if behind a proxy (like nginx)
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:
         return forwarded.split(",")[0].strip()
-    
-    # Direct connection
     return request.client.host if request.client else "unknown"
 
 # Helper function to execute database queries
@@ -177,24 +169,20 @@ def execute_query(query: str, params: tuple = (), fetch: str = None):
 def record_visit(visit_data: VisitRequest, request: Request):
     """Record a page visit"""
     try:
-        # Get visitor information
-        url = visit_data.url
+        url = normalize_url(visit_data.url)
         ip = get_client_ip(request)
         user_agent = request.headers.get("User-Agent", "unknown")
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Insert visit into database
+
         execute_query(
-            "INSERT INTO visits (url, ip_address, user_agent, timestamp) VALUES (%s, %s, %s, %s)",
+            "INSERT INTO page_views (url, ip_address, user_agent, viewed_at) VALUES (%s, %s, %s, %s)",
             (url, ip, user_agent, timestamp)
         )
-        
+
         logger.info(f"Visit recorded: {url} from {ip}")
-        
-    
-        # Count total visits for that URL
+
         total_row = execute_query(
-            "SELECT COUNT(*) FROM visits WHERE url = %s", (url,), fetch="one"
+            "SELECT COUNT(*) FROM page_views WHERE url = %s", (url,), fetch="one"
         )
         total = total_row[0] if total_row else 0
 
@@ -205,7 +193,7 @@ def record_visit(visit_data: VisitRequest, request: Request):
             "status": f"Visit #{total:,} recorded",
             "timestamp": timestamp
         }
-    
+
     except Exception as e:
         logger.error(f"Error recording visit: {e}")
         raise
@@ -215,25 +203,19 @@ def record_visit(visit_data: VisitRequest, request: Request):
 def get_stats():
     """Get visit statistics"""
     try:
-        # Count total visits
-        total_visits = execute_query("SELECT COUNT(*) FROM visits", fetch="one")[0]
-        
-        # Count unique visitors
-        unique_visitors = execute_query("SELECT COUNT(DISTINCT ip_address) FROM visits", fetch="one")[0]
-        
-        # Get recent visits (last 10)
+        total_visits = execute_query("SELECT COUNT(*) FROM page_views", fetch="one")[0]
+        unique_visitors = execute_query("SELECT COUNT(DISTINCT ip_address) FROM page_views", fetch="one")[0]
+
         recent_visits = execute_query(
-            "SELECT url, ip_address, timestamp FROM visits ORDER BY timestamp DESC LIMIT 10",
+            "SELECT url, ip_address, viewed_at FROM page_views ORDER BY viewed_at DESC LIMIT 10",
             fetch="all"
         )
-        
-        # Get popular pages (count visits per URL)
+
         url_counts = execute_query(
-            "SELECT url, COUNT(*) as count FROM visits GROUP BY url ORDER BY count DESC",
+            "SELECT url, COUNT(*) as count FROM page_views GROUP BY url ORDER BY count DESC",
             fetch="all"
         )
-        
-        # Format the response
+
         return {
             "total_visits": f"{total_visits:,}",
             "unique_visitors": f"{unique_visitors:,}",
@@ -247,7 +229,7 @@ def get_stats():
                 for url, ip, timestamp in (recent_visits or [])
             ]
         }
-    
+
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
         raise
@@ -257,19 +239,18 @@ def get_stats():
 def record_visit_simple(url: str = Query(..., description="The URL being visited"), request: Request = None):
     """Simple endpoint to record a visit via GET request"""
     try:
+        url = normalize_url(url)
         ip = get_client_ip(request)
         user_agent = request.headers.get("User-Agent", "unknown")
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Insert visit into database
+
         execute_query(
-            "INSERT INTO visits (url, ip_address, user_agent, timestamp) VALUES (%s, %s, %s, %s)",
+            "INSERT INTO page_views (url, ip_address, user_agent, viewed_at) VALUES (%s, %s, %s, %s)",
             (url, ip, user_agent, timestamp)
         )
-        
-        # Count total visits for this URL
+
         total_row = execute_query(
-            "SELECT COUNT(*) FROM visits WHERE url = %s", (url,), fetch="one"
+            "SELECT COUNT(*) FROM page_views WHERE url = %s", (url,), fetch="one"
         )
         total = total_row[0] if total_row else 0
 
@@ -282,7 +263,7 @@ def record_visit_simple(url: str = Query(..., description="The URL being visited
             "timestamp": timestamp,
             "visits": f"{total:,}"
         }
-    
+
     except Exception as e:
         logger.error(f"Error recording visit: {e}")
         raise
@@ -298,58 +279,50 @@ def health_check():
     }
 
 # Get all visits (useful for debugging)
-from fastapi import Depends
-
 @app.get("/all-visits")
 def get_all_visits(
-    start_date: Optional[str] = None,  # Format: YYYY-MM-DD
-    end_date: Optional[str] = None,    # Format: YYYY-MM-DD
-    since: Optional[str] = None,       # Format: YYYY-MM-DD HH:MM:SS or ISO
-    range: Optional[str] = None,       # Format: YYYY-MM-DD,YYYY-MM-DD
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    since: Optional[str] = None,
+    range: Optional[str] = None,
     limit: Optional[int] = None,
     offset: Optional[int] = None,
-    format: Optional[str] = None,      # 'jsonl' for JSON Lines output
+    format: Optional[str] = None,
     response: Response = None
 ):
-    """Get all visits, with optional date range, range, and incremental sync support. Supports JSONL output."""
+    """Get all visits, with optional date range filtering."""
     try:
-        query = "SELECT url, ip_address, user_agent, timestamp FROM visits"
+        query = "SELECT url, ip_address, user_agent, viewed_at FROM page_views"
         conditions = []
         params = []
 
-        # Range filtering (takes precedence)
         if range:
             try:
                 start, end = [x.strip() for x in range.split(",")[:2]]
-                # Always treat end as exclusive
-                from datetime import datetime
                 if len(start) == 10:
                     start += " 00:00:00"
                 if len(end) == 10:
                     end = end + " 00:00:00"
-                # If end is a full datetime, do not adjust, but always use < end (exclusive)
-                conditions.append("timestamp >= %s")
+                conditions.append("viewed_at >= %s")
                 params.append(start)
-                conditions.append("timestamp < %s")
+                conditions.append("viewed_at < %s")
                 params.append(end)
             except Exception as e:
                 logger.error(f"Invalid range parameter: {range} - {e}")
         else:
-            # Date range filtering
             if start_date:
-                conditions.append("date(timestamp) >= date(%s)")
+                conditions.append("date(viewed_at) >= date(%s)")
                 params.append(start_date)
             if end_date:
-                conditions.append("date(timestamp) <= date(%s)")
+                conditions.append("date(viewed_at) <= date(%s)")
                 params.append(end_date)
-            # Since timestamp filtering
             if since:
-                conditions.append("timestamp > %s")
+                conditions.append("viewed_at > %s")
                 params.append(since)
 
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
-        query += " ORDER BY timestamp DESC"
+        query += " ORDER BY viewed_at DESC"
         if limit:
             query += " LIMIT %s"
             params.append(limit)
@@ -357,23 +330,16 @@ def get_all_visits(
             query += " OFFSET %s"
             params.append(offset)
 
-        # Debug: log the final query and params
-        logger.info(f"/all-visits SQL: {query}")
-        logger.info(f"/all-visits params: {params}")
-
-
         visits = execute_query(query, tuple(params), fetch="all")
 
-        # Debug: log the raw and normalized timestamps for each visit
         visit_dicts = []
         for url, ip, user_agent, timestamp in (visits or []):
             norm_ts = timestamp
             try:
-                dt = date_parser.parse(timestamp)
+                dt = date_parser.parse(str(timestamp))
                 norm_ts = dt.strftime("%Y-%m-%d %H:%M:%S")
             except Exception as e:
                 logger.warning(f"Could not parse timestamp '{timestamp}': {e}")
-            logger.info(f"Visit: url={url}, raw_ts={timestamp}, norm_ts={norm_ts}")
             visit_dicts.append({
                 "url": url,
                 "ip": ip,
@@ -382,11 +348,9 @@ def get_all_visits(
             })
 
         if format == "jsonl":
-            # Output as JSON Lines, one object per line, no summary
             content = "\n".join(json.dumps(v, ensure_ascii=False) for v in visit_dicts)
             return Response(content=content, media_type="application/jsonl")
         elif format == "csv":
-            # Output as CSV
             import io
             import csv
             output = io.StringIO()
@@ -397,7 +361,6 @@ def get_all_visits(
             output.close()
             return Response(content=content, media_type="text/csv")
         else:
-            # Default: JSON object with summary
             return {
                 "visits": visit_dicts,
                 "total_count": f"{len(visit_dicts):,}"
